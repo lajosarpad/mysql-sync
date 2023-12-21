@@ -81,19 +81,29 @@ function describe($db, bool $ignoreColumnWidths)
     if (! $tableName) {
       continue;
     }
+
+    $noText = ['tinyint', 'smallint', 'mediumint', 'int', 'bigint', 'decimal', 'float'];
         
     if ($r = $db->query("DESCRIBE `$tableName`")) {
       $table = [];
       foreach ($r as $info) {
-        $info['Null'] = $info['Null'] == 'YES' ? '' : 'NOT NULL';
-        if (! empty($info['Default'])) {
-          $info['Default'] = 'DEFAULT '.$info['Default'];
-        }
-                
         $type = $info['Type'] ?? '';
+        $typeName = strtolower(trim((strpos($type, "(") !== false) ? substr($type, 0, strpos($type, "(")) : $type));
         $widthFlag = strpos($type, '(');
         if ($ignoreColumnWidths && $type && $widthFlag !== false) {
           $info['Type'] = preg_replace("/(\(.+?\))/", "", $type);
+        }
+
+        $info['Null'] = $info['Null'] == 'YES' ? '' : 'NOT NULL';
+        $numeric = false;
+        foreach ($noText as $nt) {
+          $numeric = $numeric || (strpos($typeName, $nt) !== false);
+        }
+        if (! empty($info['Default'])) {
+          if ((!$numeric) && (strtolower(trim($info['Default'])) !== 'null')) {
+            $info['Default'] = "'{$info['Default']}'";
+          }
+          $info['Default'] = 'DEFAULT '.$info['Default'];
         }
                 
         $name = $info['Field'];
@@ -131,6 +141,7 @@ function sync($source, $dest, bool $dryRun, bool $ignoreColumnWidths): array
     $create = $source->query("SHOW CREATE TABLE `$tblName`");
     if ($create && $r = $create->fetch_assoc()) {
       $create = $r["Create Table"];
+      $create = str_replace("DEFAULT '0000-00-00", "DEFAULT '2000-01-01", $create);
       $newStatements[] = $create;
       if (! $dryRun) {
         println("creating $tblName");
@@ -176,7 +187,8 @@ function sync($source, $dest, bool $dryRun, bool $ignoreColumnWidths): array
         
     $previousDesc = [];
     foreach ($existingM as $fn => $descrption) {
-      $slaveDescription = $existingS[$fn] ?? '';
+      $slaveDescription = str_replace("DEFAULT '0000-00-00", "DEFAULT '2000-01-01", $existingS[$fn] ?? '');
+      $descrption = str_replace("DEFAULT '0000-00-00", "DEFAULT '2000-01-01", $descrption);
       if ($descrption != $slaveDescription) {
         $m = "MODIFY COLUMN $descrption";
         $alter[] = $m;
